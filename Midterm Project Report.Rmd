@@ -1,0 +1,199 @@
+---
+title: "Predicting Chance of Winning in League of Legends"
+author: Jason Lu
+output: pdf_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(arm)
+library(data.table)
+
+setwd("C:/Users/lujas/Desktop/MA 678")
+data <- read.csv("final_data.csv")
+stats <- read.csv("champion_stats.csv")
+wr_overall <- read.csv("wr_overall.csv")
+wr_all_by_region <- read.csv("wr_all_by_region.csv")
+```
+
+# Abstract
+
+League of Legends is one of the most popular online games to date with millions of potential team compositions. This project will attempt to predict whether a team will win a game based on the champions chosen by converting champions into their attack, defense, magic, and difficulty values and associate them to a team's chance of winning. Increased values of stats is associated with a reduction in the probability of winning, however it will be shown that many other factors are at play. The game of League of Legends is more than just numbers.
+
+# Introduction
+League of Legends is an online game in which two teams of 5 face off against each other to destroy the other’s base. Colloquially, there are two sides of the map: red side on the upper right half and blue side on the lower left half. Furthermore, there are 5 positions each with their own designated spot on the map: one person in the top lane, one person in the jungle, one person in the mid lane, and two people in the bottom lane. Players select a unique champion to play each with their own strengths and weaknesses to combat the opposition. Within the highest echelon of the game is the professional scene, in which the best of the best face off in their own region to qualify for the world stage and compete to be world champions.
+
+The overarching question I would like to answer is whether I can predict a team will win based on the champions they have chosen. There are also two other questions I am interested in that can be answered through data analysis:
+
+In the professional scene in League of Legends, regions fundamentally play differently from each other. For example, China has an extremely aggressive playstyle while Korea plays slow and calculated. So, my first question is as follows:
+
+1.	Do certain regions pick champions based on their playstyle, or play the same champions as any other region, just differently?
+
+Furthermore, in each iteration of the game, there is a certain “meta” to it, meaning that some champions will be fundamentally better than others and will be picked very often, but it leads to my second question:
+
+2.	Do meta champions have a higher win rate than other champions?
+
+# Method
+The dataset I have been working on deals with all professional League of Legends games in the 2020 season across all regions. It has over 5000 games played and contains the following variables:
+
+•	league – league under the region these games were played in (China, North America, Europe, etc.)
+
+•	blue/red team – team on the blue/red side of the map
+
+•	blue/red top – champion in the top lane
+
+•	blue/red jungle – champion in the jungle
+
+•	blue/red mid – champion in the mid lane
+
+•	blue/red adc – one of two champions in the bot lane
+
+•	blue/red support – one of two champions in the bot lane
+
+•	result – indicator of whether the blue team won (1 if won, 0 if lost)
+
+
+I also have a dataset containing every champion in the game along side their stats such as attack, defense, magic, and difficulty values.
+
+The data was collected from a user on Kaggle who got the match data from League of Legends esports stats website “Oracle’s Elixir” as well as champion data from Riot Game’s (the company that made League of Legends) API. I used arm, data.table, dplyr, and ggplot2 packages for my analysis.
+
+For the cleaning, I first separated the teams into two sets and then merged them back together so that each team has their own row and added a variable indicating what side the team played on. I then took a subset of the data to only include major regions the games were played in (since the data came from every professional Esport game played in 2020), so we only have games from the LEC, LPL, LCK, and LCS representing Europe, China, Korea, and North America respectively. Finally, for any champion with 10 or less frequency in a region, I replaced with ‘NA’ since the champion would not have enough frequency to be accurately represented in predicting a win.
+
+I then created two metrics for EDA and model–building purposes respectively. For EDA, win rate is calculated by summing all instances of a champion winning (having a ‘1’ for result) and dividing by the total number of games the champion was in. I did this both by region, meaning each champion’s win rate in their respective region, and not by region, meaning the champion in general (Figure 1).
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Frequency of Top 15 Champions Played"}
+plot_1 <- top_n(wr_overall, n=15, Total.Games) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Total.Games, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Most Played Champions") + ylab("Number of Games Played") +
+  theme(legend.position="none")
+plot_1
+```
+
+The meta at the time was aggression and bruisers, not too many team compositions focused on 5v5 fights but dueling power to become strong and take over the game.
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Win Rate of Top 15 Champions Played"}
+plot_2 <- wr_overall %>% arrange(-Total.Games) %>% top_n(Total.Games, n=15) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Win.Rate, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  geom_hline(yintercept = 0.5,color="darkorchid", size=1) +
+  xlab("Most Played Champions") + ylab("Win Rate") +
+  theme(legend.position="none")
+plot_2
+```
+
+As seen in Figure 2, the most played champions do not appear to have an overwhelming majority of win rates above 50%, so it seems that "meta" champions do not have a significantly higher win rate than other champions (the average win rate is approximately 50%).
+
+In Figures 5 - 8, champions such as Aphelios, Ezreal, Sett, and Ornn were prevalent across all regions. Some regions have their own distinct picks such as Rakan in North America, Syndra over other regions' Azir in China, Kalista in Korea, and Gangplank in Europe. Although not overwhelming, there does seem to be certain champions some regions favor over others. The difference in the amount of games played comes from the different formats, with best of one's played in NA and Europe and best of three's in China and Korea.
+
+To help build the model I incorporated the attack, defense, magic, and difficulty stats of each champion for each team to acquire a more wholistic view of the data that is not just the champion name. I referenced the champions on each team with the dataset containing each champions’ stats and created the average attack, defense, magic, and difficulty of each team composition to use in the model. I took the average since some teams would contain ‘NA’ for some positions due to the cleaning I did for severely underplayed champions, thus affecting how much the total stats would be for each team.
+
+When creating the model, incorporating the champions as a factor was extensive and did not allow me to add champion stats as there were not enough observations to incorporate them both together. Thus I stuck with a multilevel logistic mixed effects model that predicts chances of winning with champion statistics as predictors (Figure 3) and team name as random effects (values in Appendix) since teams play the game and would perform differently from other teams.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height = 3, fig.cap = "Multilevel Logistic Model Coefficient Values"}
+model_stats <- glmer(result ~ ave_attack + ave_defense + ave_magic + ave_difficulty + (1|team), 
+                     family=binomial(link="logit"), data=data)
+
+predictors <- fixef(model_stats)
+ci <- confint(model_stats)
+ci <- ci[-1,]
+model_table <- data.frame(predictor=rownames(ci[,0]),
+                          coefficient=predictors,
+                          lci=ci[,1],
+                          uci=ci[,2])
+
+ggplot(model_table[-1,],aes(y=predictor,x=coefficient,xmin=lci,xmax=uci)) + theme_bw() +
+  geom_point() + geom_text(aes(label=round(coefficient,digits=3)), hjust=0.5,vjust=-1, digits=3) + 
+  geom_errorbarh(height=0) + geom_vline(xintercept = 0, color="purple")
+```
+
+# Results
+Based on the model, average attack, defense, and magic of a team composition seem to have evidence of a negative effect on the chance of winning a game, with a decrease of 0.14, 0.13, and 0.11 in the log odds of winning a game for each point increase of average attack, defense, and magic respectively. Meanwhile, average difficulty does not seem to affect the outcome of a game. The team random effect from -0.80 to 0.92 depending on the team. 
+
+The binned residuals (Figure 4) asses the overall fit of the regression model. The more the points lie within the confidence limits, the better the fit of the model. Figure X a decent fit of the model, although it tends to underpredict team compositions with less average stats and overpredict team compositions with higher average stats. As a whole, it seems to be okay as a large factor in determining a composition winning is the team that plays it.
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Binned Residuals for Model"}
+binnedplot(fitted(model_stats), resid(model_stats))
+```
+
+
+# Discussion
+Having increased average attack, defense, and magic stat of a team lowering our chances of winning is unexpected, since normally higher stats mean you would be stronger and thus be able to win more, though too much of one stat would be detrimental to your chances. A large part of how a game is won is due to teamwork and coordination of players, not just the champions that are chosen, which is why the random effects of the team have a significant influence on the outcome of a match, causing the model to have negative coefficients for the predictors. For example, teams like Cloud9 have a great roster that works well with each other and do not make many mistakes in game, leading to a high effect value compared to other teams.
+
+The game of League of Legends stems far from just numbers on how strong a champion is, limiting the generalizability of the model heavily. It encompasses an infinitesimal among of factors not captured in the model such as how you play your champion, how good your decision-making is, and even how well any individual is playing that day. 
+
+Future implementations of the model would be metrics to incorporate champion interactions with each other (some champions work extremely well with each other), what team of champions you are facing (similar to how a champion works well with others, some champions work very well against others), which side you are playing on (it determines the draft order, which can decide a game before it even starts), and individual champions as factors in the model alongside their stats (sometimes having this one champion will win or lose the game). 
+
+
+# Appendix
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Frequency of Top 15 Champions Played in LCS"}
+LCS <- subset(wr_all_by_region, Region=="LCS")
+
+LCS_champs <- top_n(LCS, n=15, Total.Games) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Total.Games, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Most Played Champions North America") +
+  theme(legend.position="none")
+LCS_champs
+```
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Frequency of Top 15 Champions Played in LPL"}
+LPL <- subset(wr_all_by_region, Region=="LPL")
+
+LPL_champs <- top_n(LPL, n=15, Total.Games) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Total.Games, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Most Played Champions China") +
+  theme(legend.position="none")
+LPL_champs
+```
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Frequency of Top 15 Champions Played in LCK"}
+LCK <- subset(wr_all_by_region, Region=="LCK")
+
+LCK_champs <- top_n(LCK, n=15, Total.Games) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Total.Games, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Most Played Champions Korea") +
+  theme(legend.position="none")
+LCK_champs
+```
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Frequency of Top 15 Champions Played in LEC"}
+LEC <- subset(wr_all_by_region, Region=="LEC")
+
+LEC_champs <- top_n(LEC, n=15, Total.Games) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Total.Games, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Most Played Champions Europe") +
+  theme(legend.position="none")
+LEC_champs
+```
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Distribution of Champion Stats"}
+boxplot(stats$attack, stats$defense, stats$magic, stats$difficulty, names=c("Attack","Defense","Magic","Difficulty"))
+```
+
+```{r, echo=FALSE, fig.height = 5, fig.cap = "Win Rate of Top 80 Champions Played"}
+wr_top_80 <- wr_overall %>% arrange(-Total.Games) %>% top_n(Total.Games, n=80) %>%
+  ggplot(., aes(x=reorder(Champion,-Total.Games), y=Win.Rate, fill=Champion)) +
+  geom_bar(stat='identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  geom_hline(yintercept = 0.5,color="darkorchid", size=1) +
+  xlab("Most Played Champions") + ylab("Win Rate") +
+  theme(legend.position="none")
+wr_top_80
+```
+
+```{r, echo=FALSE, fig.height = 3, fig.cap = "Team Random Effects for Model"}
+ranef(model_stats)
+```
